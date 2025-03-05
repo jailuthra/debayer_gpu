@@ -1,0 +1,151 @@
+import sys
+import numpy as np
+import ctypes
+from OpenGL.GL import *
+from OpenGL.GL.shaders import compileProgram, compileShader
+from PyQt6.QtWidgets import QApplication, QMainWindow
+from PyQt6.QtOpenGLWidgets import QOpenGLWidget
+from PyQt6.QtCore import Qt
+
+WIDTH = 3280
+HEIGHT = 2464
+IMAGE_PATH = "3280.img" # 10-bit bayer
+
+class OpenGLImageWidget(QOpenGLWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.shader_program = None
+        self.VAO = None
+        self.VBO = None
+        self.EBO = None
+        self.texture_id = None
+
+    def load_shaders(self, vertex_shader_path, fragment_shader_path):
+        """Loads and compiles shaders from files."""
+        with open(vertex_shader_path, 'r') as f:
+            vertex_shader_code = f.read()
+        with open(fragment_shader_path, 'r') as f:
+            fragment_shader_code = f.read()
+
+        vertex_shader = compileShader(vertex_shader_code, GL_VERTEX_SHADER)
+        fragment_shader = compileShader(fragment_shader_code, GL_FRAGMENT_SHADER)
+        return compileProgram(vertex_shader, fragment_shader)
+
+    def load_texture(self, image_path):
+        """Loads a raw image file into an OpenGL texture."""
+        try:
+            img = open(image_path, 'rb')
+            img_data = np.frombuffer(img.read(), '<i2')
+            width, height = WIDTH, HEIGHT
+
+            texture_id = glGenTextures(1)
+            glBindTexture(GL_TEXTURE_2D, texture_id)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, width, height, 0, GL_RED, GL_UNSIGNED_SHORT, img_data)
+
+            return texture_id, width, height
+        except FileNotFoundError:
+            print(f"Error: Image file not found at {image_path}")
+            return None, 0, 0
+        except Exception as e:
+            print(f"Error loading texture: {e}")
+            return None, 0, 0
+
+    def initializeGL(self):
+        """Initialize OpenGL context and resources."""
+        # Load shaders
+        self.shader_program = self.load_shaders("simple.vert", "bayer.frag")
+
+        # Define vertices for full-screen quad
+        # 2D vertex coordinate + 2D texture coordinates
+        vertices = np.array([
+            -1.0,  1.0, 0.0, 0.0, # top left
+            -1.0, -1.0, 0.0, 1.0, # bottom left
+             1.0, -1.0, 1.0, 1.0, # bottom right
+             1.0,  1.0, 1.0, 0.0, # top right
+        ], dtype=np.float32)
+
+        indices = np.array([
+            0, 1, 2, # bottom left triangle
+            0, 3, 2, # top right triangle
+        ], dtype=np.uint16)
+
+        # Create VAO, VBO, EBO
+        self.VAO = glGenVertexArrays(1)
+        self.VBO = glGenBuffers(1)
+        self.EBO = glGenBuffers(1)
+
+        glBindVertexArray(self.VAO)
+
+        glBindBuffer(GL_ARRAY_BUFFER, self.VBO)
+        glBufferData(GL_ARRAY_BUFFER, vertices.nbytes, vertices, GL_STATIC_DRAW)
+
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.EBO)
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.nbytes, indices, GL_STATIC_DRAW)
+
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * 4, ctypes.c_void_p(0))
+        glEnableVertexAttribArray(0)
+
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * 4, ctypes.c_void_p(2 * 4))
+        glEnableVertexAttribArray(1)
+
+        # Load texture
+        self.texture_id, width, height = self.load_texture(IMAGE_PATH)
+        if self.texture_id is None:
+            print("Failed to load texture")
+
+    def paintGL(self):
+        """Render the scene."""
+        glClear(GL_COLOR_BUFFER_BIT)
+
+        glUseProgram(self.shader_program)
+
+        if self.texture_id is not None:
+            glBindTexture(GL_TEXTURE_2D, self.texture_id)
+            glBindVertexArray(self.VAO)
+            glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, None)
+
+    def resizeGL(self, width, height):
+        """Handle window resize."""
+        glViewport(0, 0, width, height)
+
+    def cleanup(self):
+        """Clean up OpenGL resources."""
+        if self.texture_id is not None:
+            glDeleteTextures(1, [self.texture_id])
+        if self.VBO is not None:
+            glDeleteBuffers(1, [self.VBO])
+        if self.VAO is not None:
+            glDeleteVertexArrays(1, [self.VAO])
+        if self.shader_program is not None:
+            glDeleteProgram(self.shader_program)
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("OpenGL Image Display")
+        
+        # Create OpenGL widget and set as central widget
+        self.gl_widget = OpenGLImageWidget(self)
+        self.setCentralWidget(self.gl_widget)
+        
+        # Resize window to a reasonable size
+        self.resize(min(WIDTH, 1920), min(HEIGHT, 1080))
+
+    def closeEvent(self, event):
+        """Ensure OpenGL resources are cleaned up on window close."""
+        self.gl_widget.cleanup()
+        event.accept()
+
+def main():
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())
+
+if __name__ == "__main__":
+    main()
+
