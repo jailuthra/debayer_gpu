@@ -68,7 +68,7 @@ class OpenGLImageWidget(QOpenGLWidget):
     def initializeGL(self):
         """Initialize OpenGL context and resources."""
         # Load shaders
-        self.shader_program = self.load_shaders("/home/darkapex/git/opengl/simple.vert", "/home/darkapex/git/opengl/bayer.frag")
+        self.shader_program = self.load_shaders("/home/darkapex/git/opengl/shaders/simple.vert", "/home/darkapex/git/opengl/shaders/bayer.frag")
 
         # Define vertices for full-screen quad
         # 2D vertex coordinate + 2D texture coordinates
