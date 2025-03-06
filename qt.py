@@ -7,9 +7,7 @@ from PyQt6.QtWidgets import QApplication, QMainWindow
 from PyQt6.QtOpenGLWidgets import QOpenGLWidget
 from PyQt6.QtCore import Qt
 
-WIDTH = 3280
-HEIGHT = 2464
-IMAGE_PATH = "3280.img" # 10-bit bayer
+IMAGE_PATH = "10bit.img" # 10-bit bayer
 
 class OpenGLImageWidget(QOpenGLWidget):
     def __init__(self, parent=None):
@@ -19,6 +17,9 @@ class OpenGLImageWidget(QOpenGLWidget):
         self.VBO = None
         self.EBO = None
         self.texture_id = None
+        self.image_data = bytes()
+        self.texture_w = 640
+        self.texture_h = 480
 
     def load_shaders(self, vertex_shader_path, fragment_shader_path):
         """Loads and compiles shaders from files."""
@@ -31,33 +32,43 @@ class OpenGLImageWidget(QOpenGLWidget):
         fragment_shader = compileShader(fragment_shader_code, GL_FRAGMENT_SHADER)
         return compileProgram(vertex_shader, fragment_shader)
 
-    def load_texture(self, image_path):
-        """Loads a raw image file into an OpenGL texture."""
+    def init_texture(self):
+        """Prepares an OpenGL texture."""
         try:
-            img = open(image_path, 'rb')
-            img_data = np.frombuffer(img.read(), '<i2')
-            width, height = WIDTH, HEIGHT
-
             texture_id = glGenTextures(1)
             glBindTexture(GL_TEXTURE_2D, texture_id)
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT)
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT)
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, width, height, 0, GL_RED, GL_UNSIGNED_SHORT, img_data)
-
-            return texture_id, width, height
-        except FileNotFoundError:
-            print(f"Error: Image file not found at {image_path}")
-            return None, 0, 0
+            return texture_id
         except Exception as e:
             print(f"Error loading texture: {e}")
-            return None, 0, 0
+            return None
+
+    def load_image_data(self, image_data, w, h):
+        self.image_data = bytes(image_data)
+        self.texture_w = w
+        self.texture_h = h
+
+    def read_raw10_file(self, image_path):
+        img = open(image_path, 'rb')
+        self.image_data = bytes(np.frombuffer(img.read(), '<i2').tobytes())
+
+    def load_texture(self):
+        """Loads a raw image file into an OpenGL texture."""
+        try:
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, self.texture_w, self.texture_h,
+                         0, GL_RED, GL_UNSIGNED_SHORT, self.image_data)
+        except FileNotFoundError:
+            print(f"Error: Image file not found at {image_path}")
+        except Exception as e:
+            print(f"Error loading texture: {e}")
 
     def initializeGL(self):
         """Initialize OpenGL context and resources."""
         # Load shaders
-        self.shader_program = self.load_shaders("simple.vert", "bayer.frag")
+        self.shader_program = self.load_shaders("/home/darkapex/git/opengl/simple.vert", "/home/darkapex/git/opengl/bayer.frag")
 
         # Define vertices for full-screen quad
         # 2D vertex coordinate + 2D texture coordinates
@@ -92,21 +103,26 @@ class OpenGLImageWidget(QOpenGLWidget):
         glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * 4, ctypes.c_void_p(2 * 4))
         glEnableVertexAttribArray(1)
 
-        # Load texture
-        self.texture_id, width, height = self.load_texture(IMAGE_PATH)
-        if self.texture_id is None:
-            print("Failed to load texture")
-
     def paintGL(self):
         """Render the scene."""
         glClear(GL_COLOR_BUFFER_BIT)
 
         glUseProgram(self.shader_program)
 
+        # Clean old texture
         if self.texture_id is not None:
-            glBindTexture(GL_TEXTURE_2D, self.texture_id)
-            glBindVertexArray(self.VAO)
-            glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, None)
+            glDeleteTextures(1, [self.texture_id])
+            self.texture_id = None
+
+        # Load texture
+        self.texture_id = self.init_texture()
+        if self.texture_id is None:
+            print("Failed to init texture")
+
+        self.load_texture()
+        glBindTexture(GL_TEXTURE_2D, self.texture_id)
+        glBindVertexArray(self.VAO)
+        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, None)
 
     def resizeGL(self, width, height):
         """Handle window resize."""
@@ -114,8 +130,6 @@ class OpenGLImageWidget(QOpenGLWidget):
 
     def cleanup(self):
         """Clean up OpenGL resources."""
-        if self.texture_id is not None:
-            glDeleteTextures(1, [self.texture_id])
         if self.VBO is not None:
             glDeleteBuffers(1, [self.VBO])
         if self.VAO is not None:
@@ -130,10 +144,11 @@ class MainWindow(QMainWindow):
         
         # Create OpenGL widget and set as central widget
         self.gl_widget = OpenGLImageWidget(self)
+        self.gl_widget.read_raw10_file(IMAGE_PATH)
         self.setCentralWidget(self.gl_widget)
         
         # Resize window to a reasonable size
-        self.resize(min(WIDTH, 1920), min(HEIGHT, 1080))
+        self.resize(1920, 1080)
 
     def closeEvent(self, event):
         """Ensure OpenGL resources are cleaned up on window close."""
