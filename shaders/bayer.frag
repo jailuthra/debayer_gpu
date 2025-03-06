@@ -105,8 +105,7 @@ vec4 demosaic(sampler2D tex, ivec2 pixel) {
 
 void main() {
     ivec2 texSize = textureSize(u_texture, 0);
-    vec2 flippedCoord = vec2(v_texCoord.x, 1.0 - v_texCoord.y);
-    ivec2 pixel = ivec2(flippedCoord * vec2(texSize));
+    ivec2 pixel = ivec2(v_texCoord * vec2(texSize));
     
     fragColor = demosaic(u_texture, pixel);
 }
