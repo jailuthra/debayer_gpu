@@ -2,6 +2,9 @@ import os
 import sys
 import numpy as np
 import ctypes
+from pixutils.formats import PixelFormat, PixelFormats
+from pixutils.conv.raw import RawFormat
+from dataclasses import dataclass
 from OpenGL.GL import *
 from OpenGL.GL.shaders import compileProgram, compileShader
 from PyQt6.QtWidgets import QApplication, QMainWindow
@@ -9,6 +12,31 @@ from PyQt6.QtOpenGLWidgets import QOpenGLWidget
 from PyQt6.QtCore import Qt
 
 IMAGE_PATH = "10bit.img" # 10-bit bayer
+
+@dataclass
+class ImageParams:
+    fmt: PixelFormat
+    black_level: float
+    white_level: float
+    white_balance: list[float]
+    gamma: float
+
+    def get_bpp(self):
+        return RawFormat.from_pixelformat(self.fmt).bits_per_pixel
+
+    def get_bayer_pattern(self):
+        match self.fmt.name[1:5]:
+            case 'BGGR':
+                return 0
+            case 'GBRG':
+                return 1
+            case 'GRBG':
+                return 2
+            case 'RGGB':
+                return 3
+        print(f"Pixelformat not supported by shader: {self.fmt}")
+        return 0
+
 
 class OpenGLImageWidget(QOpenGLWidget):
     def __init__(self, parent=None):
@@ -21,6 +49,10 @@ class OpenGLImageWidget(QOpenGLWidget):
         self.image_data = bytes()
         self.texture_w = 640
         self.texture_h = 480
+        self.image_params = ImageParams(
+            black_level=(16 / 255), white_level=1.0,
+            white_balance=[1.8, 1.0, 1.5],
+            gamma=2.2, fmt=PixelFormats.SRGGB10)
 
     def load_shaders(self, vertex_shader_path, fragment_shader_path):
         """Loads and compiles shaders from files."""
@@ -47,10 +79,11 @@ class OpenGLImageWidget(QOpenGLWidget):
             print(f"Error loading texture: {e}")
             return None
 
-    def load_image_data(self, image_data, w, h):
+    def load_image_data(self, image_data, fmt: PixelFormat, w, h):
         self.image_data = bytes(image_data)
         self.texture_w = w
         self.texture_h = h
+        self.image_params.fmt = fmt
 
     def read_raw10_file(self, image_path):
         img = open(image_path, 'rb')
@@ -58,9 +91,13 @@ class OpenGLImageWidget(QOpenGLWidget):
 
     def load_texture(self):
         """Loads a raw image file into an OpenGL texture."""
+        if self.image_params.get_bpp() == 8:
+            tex_type = GL_UNSIGNED_BYTE
+        else:
+            tex_type = GL_UNSIGNED_SHORT
         try:
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, self.texture_w, self.texture_h,
-                         0, GL_RED, GL_UNSIGNED_SHORT, self.image_data)
+                         0, GL_RED, tex_type, self.image_data)
         except FileNotFoundError:
             print(f"Error: Image file not found at {image_path}")
         except Exception as e:
@@ -112,6 +149,32 @@ class OpenGLImageWidget(QOpenGLWidget):
         glClear(GL_COLOR_BUFFER_BIT)
 
         glUseProgram(self.shader_program)
+
+        p = self.image_params
+
+        black_level_loc = glGetUniformLocation(self.shader_program, 'blackLevel')
+        glUniform1f(black_level_loc, p.black_level)
+
+        white_level_loc = glGetUniformLocation(self.shader_program, 'whiteLevel')
+        glUniform1f(white_level_loc, p.white_level)
+
+        wb_loc = glGetUniformLocation(self.shader_program, 'whiteBalance')
+        glUniform3fv(wb_loc, 1, np.array(p.white_balance, dtype=np.float32))
+        self.wb_loc = wb_loc
+
+        gamma_loc = glGetUniformLocation(self.shader_program, 'gamma')
+        glUniform1f(gamma_loc, p.gamma)
+
+        bayer_pattern_loc = glGetUniformLocation(self.shader_program, 'bayerPattern')
+        glUniform1i(bayer_pattern_loc, self.image_params.get_bayer_pattern())
+
+        if p.get_bpp() == 8:
+            scaling_factor = 1.0
+        else:
+            scaling_factor = 2 ** (16 - p.get_bpp())
+
+        scaling_factor_loc = glGetUniformLocation(self.shader_program, 'scalingFactor')
+        glUniform1f(scaling_factor_loc, scaling_factor)
 
         # Clean old texture
         if self.texture_id is not None:
