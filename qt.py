@@ -11,7 +11,6 @@ from PyQt6.QtWidgets import QApplication, QMainWindow
 from PyQt6.QtOpenGLWidgets import QOpenGLWidget
 from PyQt6.QtCore import Qt
 
-IMAGE_PATH = "10bit.img" # 10-bit bayer
 
 @dataclass
 class ImageParams:
@@ -84,10 +83,6 @@ class OpenGLImageWidget(QOpenGLWidget):
         self.texture_w = w
         self.texture_h = h
         self.image_params.fmt = fmt
-
-    def read_raw10_file(self, image_path):
-        img = open(image_path, 'rb')
-        self.image_data = bytes(np.frombuffer(img.read(), '<i2').tobytes())
 
     def load_texture(self):
         """Loads a raw image file into an OpenGL texture."""
@@ -203,31 +198,3 @@ class OpenGLImageWidget(QOpenGLWidget):
             glDeleteVertexArrays(1, [self.VAO])
         if self.shader_program is not None:
             glDeleteProgram(self.shader_program)
-
-class MainWindow(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("OpenGL Image Display")
-        
-        # Create OpenGL widget and set as central widget
-        self.gl_widget = OpenGLImageWidget(self)
-        self.gl_widget.read_raw10_file(IMAGE_PATH)
-        self.setCentralWidget(self.gl_widget)
-        
-        # Resize window to a reasonable size
-        self.resize(1920, 1080)
-
-    def closeEvent(self, event):
-        """Ensure OpenGL resources are cleaned up on window close."""
-        self.gl_widget.cleanup()
-        event.accept()
-
-def main():
-    app = QApplication(sys.argv)
-    window = MainWindow()
-    window.show()
-    sys.exit(app.exec())
-
-if __name__ == "__main__":
-    main()
-
